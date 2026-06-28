@@ -17,10 +17,12 @@ K线周期：1 分钟
 信号来源：LogEarn 苏醒信号（breakout_volume_10x）
 """
 
-import time
+import time, logging
 from typing import Optional
 from indicators.vwap import calc_vwap
 from indicators.ao_ac import calc_ao_series
+
+logger = logging.getLogger("strategy")
 
 # 平台白名单（Pump.fun / Mayhem）
 ALLOW_PLATFORMS = {
@@ -123,6 +125,8 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     # ------------------------------------------------------------------
     vwap = calc_vwap(closes, highs, lows, volumes)
     last_close = closes[-1]
+    vwap_pct = (last_close - vwap) / vwap * 100 if vwap > 0 else 0.0
+    logger.debug(f"  VWAP={vwap:.6f}  收盘={last_close:.6f}  偏差={vwap_pct:+.2f}%")
     if vwap <= 0 or last_close <= vwap:
         return False, f"价格未站上VWAP（收盘:{last_close:.6f} VWAP:{vwap:.6f}）"
 
@@ -130,10 +134,11 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     # 8. AO：最近 3 根全 > 0 且严格递增（ao0 > ao1 > ao2）
     # ------------------------------------------------------------------
     ao_series = calc_ao_series(highs, lows)
-    if len(ao_series) < AO_LOOKBACK + 4:  # 保证有足够的 AC 窗口
+    if len(ao_series) < AO_LOOKBACK + 4:
         return False, f"AO序列不足（{len(ao_series)}根）"
 
     ao0, ao1, ao2 = ao_series[-1], ao_series[-2], ao_series[-3]
+    logger.debug(f"  AO =[{ao0:+.6f}, {ao1:+.6f}, {ao2:+.6f}]")
     if not (ao0 > 0 and ao1 > 0 and ao2 > 0):
         return False, f"AO未全部>0：[{ao0:.4f},{ao1:.4f},{ao2:.4f}]"
     if not (ao0 > ao1 > ao2):
@@ -156,6 +161,7 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     ac2 = _ac_at(2)
     if ac0 is None or ac1 is None or ac2 is None:
         return False, "AC数据不足"
+    logger.debug(f"  AC =[{ac0:+.6f}, {ac1:+.6f}, {ac2:+.6f}]")
     if not (ac0 > 0 and ac1 > 0 and ac2 > 0):
         return False, f"AC未全部>0：[{ac0:.4f},{ac1:.4f},{ac2:.4f}]"
     if not (ac0 > ac1 > ac2):
@@ -165,9 +171,8 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     # 全部通过
     # ------------------------------------------------------------------
     return True, (
-        f"[命中] {symbol} | "
         f"年龄={age_days:.1f}天 | "
-        f"VWAP={vwap:.6f} 收盘={last_close:.6f} | "
-        f"AO=[{ao0:.4f},{ao1:.4f},{ao2:.4f}] | "
-        f"AC=[{ac0:.4f},{ac1:.4f},{ac2:.4f}]"
+        f"VWAP={vwap:.6f} 收盘={last_close:.6f}({vwap_pct:+.2f}%) | "
+        f"AO=[{ao0:+.4f},{ao1:+.4f},{ao2:+.4f}] | "
+        f"AC=[{ac0:+.4f},{ac1:+.4f},{ac2:+.4f}]"
     )

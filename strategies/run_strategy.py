@@ -16,7 +16,8 @@ Cron 配置（每1分钟）:
     * * * * *  LOGEARN_API_KEY=sk_xxx  python3 /root/strongStrategy/strategies/run_strategy.py
 """
 
-import os, sys, time, asyncio, threading
+import os, sys, time, asyncio, threading, logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
 # 项目路径
@@ -39,9 +40,29 @@ KLINE_DELTA      = 3       # 每分钟增量补齐根数（覆盖最新 3 根即
 SCAN_INTERVAL    = 5       # 池子为空时的等待间隔（秒）
 
 
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+# ============ 日志配置 ============
+
+LOG_DIR  = os.path.join(PROJECT_ROOT, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "strategy.log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+_fmt = logging.Formatter(
+    fmt="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+_file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(_fmt)
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(_fmt)
+
+logger = logging.getLogger("strategy")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(_file_handler)
+logger.addHandler(_console_handler)
 
 
 # ============ 后台线程：每 60s 拉信号入池 ============
@@ -57,7 +78,7 @@ def signal_fetcher(pool: AwakeningPool):
                 sym = sig["symbol"]
                 ok, reason = check_static_conditions(sig)
                 if not ok:
-                    log(f"[过滤] {sym} 被淘汰：{reason}")
+                    logger.debug(f"[过滤] {sym} 被淘汰：{reason}")
                     continue
 
                 added = pool.add(ca, sym,
@@ -66,12 +87,12 @@ def signal_fetcher(pool: AwakeningPool):
                                  meta=sig)
                 if added:
                     new_count += 1
-                    log(f"[信号] 新苏醒 {sym} ({ca[:12]}...) {sig.get('volume_ratio', 0):.1f}x")
+                    logger.info(f"[信号] 新苏醒 {sym} ({ca[:12]}...) {sig.get('volume_ratio', 0):.1f}x")
 
             expired = pool.cleanup_expired()
-            log(f"[信号] 本轮新增 {new_count} 个 | 过期清理 {len(expired)} 个 | 池内 {len(pool)} 个")
+            logger.info(f"[信号] 本轮新增 {new_count} 个 | 过期清理 {len(expired)} 个 | 池内 {len(pool)} 个")
         except Exception as e:
-            log(f"[信号] 拉取失败: {e}")
+            logger.error(f"[信号] 拉取失败: {e}", exc_info=True)
 
         time.sleep(SIGNAL_INTERVAL)
 
@@ -96,37 +117,38 @@ async def check_one(item, pool: AwakeningPool):
       - 无缓存（首次入池）：全量拉取所有历史 K 线，写入 item.klines
       - 有缓存（后续每轮）：增量拉取最新 KLINE_DELTA 根，merge 补齐缓存
     """
+    sym = item.symbol
+    ca  = item.token_address
     try:
         if not item.klines:
-            # 首次：全量拉取代币全部历史
             size = _kline_size_for(item.meta)
             new_bars = await asyncio.to_thread(
-                get_kline_1m, API_KEY, item.token_address,
-                chain=item.chain, size=size
+                get_kline_1m, API_KEY, ca, chain=item.chain, size=size
             )
             item.klines = new_bars
-            log(f"[K线] {item.symbol} 首次全量 {len(new_bars)} 根")
+            logger.info(f"[K线] {sym} ({ca[:12]}...) 首次全量 {len(new_bars)} 根")
         else:
-            # 后续：只拉最新 KLINE_DELTA 根补齐
             new_bars = await asyncio.to_thread(
-                get_kline_1m, API_KEY, item.token_address,
-                chain=item.chain, size=KLINE_DELTA
+                get_kline_1m, API_KEY, ca, chain=item.chain, size=KLINE_DELTA
             )
             item.klines = merge_klines(item.klines, new_bars)
 
         if not item.klines:
             return
 
+        klen = len(item.klines)
+        logger.debug(f"── {sym} ({ca}) K线={klen}根 ──")
+
         ok, reason = check_entry_conditions(item.klines, item.meta)
         if ok:
-            log(f"[买入信号] {item.symbol} | {reason}")
+            logger.warning(f"[买入信号] {sym} ({ca}) | {reason}")
             # TODO: 接入 Phase2 买入逻辑
-            # await phase2_buy(token_address=item.token_address, amount=...)
-            pool.remove(item.token_address)
+            # await phase2_buy(token_address=ca, amount=...)
+            pool.remove(ca)
         else:
-            log(f"[扫描] {item.symbol}: {reason}")
+            logger.debug(f"  → 未命中: {reason}")
     except Exception as e:
-        log(f"[错误] 检查 {item.symbol} 时失败: {e}")
+        logger.error(f"[错误] 检查 {sym} ({ca}) 时失败: {e}", exc_info=True)
 
 
 # ============ 异步主循环：并发消费池子 ============
@@ -147,7 +169,7 @@ async def scan_loop(pool: AwakeningPool):
         t0 = time.time()
         await asyncio.gather(*[check_one(item, pool) for item in items])
         elapsed = time.time() - t0
-        log(f"[扫描] 本轮并发检查 {len(items)} 个，耗时 {elapsed:.1f}s")
+        logger.info(f"[扫描] 本轮并发检查 {len(items)} 个，耗时 {elapsed:.1f}s")
 
         # 每轮结束等满 60s，与信号拉取周期对齐
         wait = max(0, SIGNAL_INTERVAL - elapsed)
@@ -157,7 +179,7 @@ async def scan_loop(pool: AwakeningPool):
 
 async def amain():
     if not API_KEY:
-        log("ERROR: LOGEARN_API_KEY not set")
+        logger.error("LOGEARN_API_KEY not set")
         sys.exit(1)
 
     pool = AwakeningPool(max_age_seconds=POOL_MAX_AGE)
@@ -165,8 +187,8 @@ async def amain():
     # 后台线程：每 60s 拉信号
     t = threading.Thread(target=signal_fetcher, args=(pool,), daemon=True)
     t.start()
-    log("[启动] 信号拉取线程已启动（每60s）")
-    log("[启动] 异步扫描主循环已启动")
+    logger.info(f"[启动] 信号拉取线程已启动（每{SIGNAL_INTERVAL}s）")
+    logger.info(f"[启动] 异步扫描主循环已启动，日志文件：{LOG_FILE}")
 
     await scan_loop(pool)
 
