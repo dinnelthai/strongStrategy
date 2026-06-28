@@ -71,33 +71,28 @@ def get_awakening_signals(api_key: str, chain: int = 3, lookback_seconds: int = 
                 if created < cutoff:
                     continue
 
-                volume_ratio = sig.get("volume_ratio", 0) or 0
-
-                # 强苏醒：成交量倍数 >= 10（volume_ratio = 当前量/休眠均量）
-                if volume_ratio >= 10:
-                    tag = token.get("tag_users_holding_percent") or {}
-                    awakening.append({
-                        "token_address":       token.get("token_address"),
-                        "symbol":              token.get("symbol"),
-                        "signal_time":         sig.get("signal_time"),
-                        "created_time":        created,
-                        "volume_ratio":        volume_ratio,
-                        "current_volume":      sig.get("current_volume", 0),
-                        "avg_history_volume":  sig.get("avg_history_volume", 0),
-                        "chain":               token.get("chain", chain),
-                        # --- token_meta fields for strategy ---
-                        "platform":            token.get("platform", ""),
-                        "swap_begin_time":     token.get("swap_begin_time", 0),
-                        "launch_time":         token.get("launch_time", 0),
-                        "launch_time_duration": token.get("launch_time_duration", 0),
-                        "buyer_count_d1":      token.get("buyer_count_d1", 0),
-                        "buy_tx_count_d1":     token.get("buy_tx_count_d1", 0),
-                        "shit_volume":         tag.get("shit_volume", 0),
-                        "new_volume":          tag.get("new_volume", 0),
-                        "smart_volume":        tag.get("smart_volume", 0),
-                        "whale_volume":        tag.get("whale_volume", 0),
-                        "scam_volume":         tag.get("scam_volume", 0),
-                    })
+                tag = token.get("tag_users_holding_percent") or {}
+                awakening.append({
+                    "token_address":       token.get("token_address"),
+                    "symbol":              token.get("symbol"),
+                    "signal_time":         sig.get("signal_time"),
+                    "created_time":        created,
+                    "current_volume":      sig.get("current_volume", 0),
+                    "avg_history_volume":  sig.get("avg_history_volume", 0),
+                    "chain":               token.get("chain", chain),
+                    # --- token_meta fields for strategy ---
+                    "platform":            token.get("platform", ""),
+                    "swap_begin_time":     token.get("swap_begin_time", 0),
+                    "launch_time":         token.get("launch_time", 0),
+                    "launch_time_duration": token.get("launch_time_duration", 0),
+                    "buyer_count_d1":      token.get("buyer_count_d1", 0),
+                    "buy_tx_count_d1":     token.get("buy_tx_count_d1", 0),
+                    "shit_volume":         tag.get("shit_volume", 0),
+                    "new_volume":          tag.get("new_volume", 0),
+                    "smart_volume":        tag.get("smart_volume", 0),
+                    "whale_volume":        tag.get("whale_volume", 0),
+                    "scam_volume":         tag.get("scam_volume", 0),
+                })
 
     return awakening
 

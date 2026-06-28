@@ -87,7 +87,7 @@ def signal_fetcher(pool: AwakeningPool):
                                  meta=sig)
                 if added:
                     new_count += 1
-                    logger.info(f"[信号] 新苏醒 {sym} ({ca[:12]}...) {sig.get('volume_ratio', 0):.1f}x")
+                    logger.info(f"[信号] 新苏醒 {sym} ({ca[:12]}...)")
 
             expired = pool.cleanup_expired()
             logger.info(f"[信号] 本轮新增 {new_count} 个 | 过期清理 {len(expired)} 个 | 池内 {len(pool)} 个")
