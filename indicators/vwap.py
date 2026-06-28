@@ -8,9 +8,6 @@ VWAP = Σ(典型价格 × 成交量) / Σ(成交量)
 使用最近 period 根K线计算（默认全量）
 """
 
-import numpy as np
-
-
 def calc_vwap(closes: list, highs: list, lows: list, volumes: list, period: int = None) -> float:
     """
     计算 VWAP

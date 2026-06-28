@@ -60,9 +60,9 @@ def main():
             for sig in signals:
                 ca  = sig["token_address"]
                 sym = sig["symbol"]
-                pool.add(ca, sym, signal_time=sig.get("signal_time", 0), chain=sig.get("chain", CHAIN))
+                pool.add(ca, sym, signal_time=sig.get("signal_time", 0), chain=sig.get("chain", CHAIN), meta=sig)
                 new_count += 1
-                log(f"  [新苏醒] {sym} ({ca[:12]}...) close/open={sig['close_price']/sig['open_price']:.1f}x")
+                log(f"  [新苏醒] {sym} ({ca[:12]}...) volume_ratio={sig.get('volume_ratio', 0):.1f}x")
             log(f"  新增信号: {new_count} 个，池内总计: {len(pool)} 个")
         except Exception as e:
             log(f"  [错误] 获取苏醒信号失败: {e}")
@@ -87,7 +87,7 @@ def main():
                     continue
 
                 # 检查买入条件
-                ok, reason = check_entry_conditions(candles)
+                ok, reason = check_entry_conditions(candles, item.meta)
                 if ok:
                     log(f"  [买入信号] {item.symbol} | {reason}")
                     # TODO: 这里接入 Phase2 买入逻辑

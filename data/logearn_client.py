@@ -14,6 +14,12 @@ import json, subprocess, os, sys
 from datetime import datetime, timezone
 from typing import Optional
 
+_CLI_PATH = os.environ.get(
+    "LOGEARN_CLI_PATH",
+    "/Users/leon/logearn_kit/logearn-skills/logearn-cli.py"
+)
+_CLI_CWD  = os.path.dirname(_CLI_PATH)
+
 
 # ============ 苏醒信号获取 ============
 
@@ -32,11 +38,11 @@ def get_awakening_signals(api_key: str, chain: int = 3, lookback_seconds: int = 
         苏醒信号代币列表，每条包含 token 信息 + 苏醒信号详情
     """
     result = subprocess.run(
-        ["python", "/root/.hermes/skills/logearn/logearn-cli.py",
+        ["python3", _CLI_PATH,
          "log-get-24h-signals", "--chain", str(chain)],
         capture_output=True, text=True,
         env={**os.environ, "LOGEARN_API_KEY": api_key},
-        cwd="/root/.hermes/skills/logearn",
+        cwd=_CLI_CWD,
     )
 
     try:
@@ -49,34 +55,49 @@ def get_awakening_signals(api_key: str, chain: int = 3, lookback_seconds: int = 
     cutoff = now_ts - lookback_seconds
     awakening = []
 
-    for token in data:
-        if not isinstance(token, dict):
+    for chain_tokens in data:
+        if not isinstance(chain_tokens, list):
             continue
-
-        sigs = token.get("all_signals_list", {}).get("breakout_volume_10x_list", [])
-        if not sigs:
-            continue
-
-        for sig in sigs:
-            created = sig.get("created_time", 0)
-            if created < cutoff:
+        for token in chain_tokens:
+            if not isinstance(token, dict):
                 continue
 
-            open_p  = sig.get("current_open_price", 0)
-            close_p = sig.get("current_close_price", 0)
+            sigs = token.get("all_signals_list", {}).get("breakout_volume_10x_list", [])
+            if not sigs:
+                continue
 
-            # 强苏醒：close/open > 2
-            if open_p > 0 and close_p / open_p > 2:
-                awakening.append({
-                    "token_address":  token.get("token_address"),
-                    "symbol":         token.get("symbol"),
-                    "signal_time":    sig.get("signal_time"),
-                    "created_time":   created,
-                    "open_price":     open_p,
-                    "close_price":    close_p,
-                    "volume_ratio":   sig.get("volume_ratio", 0),
-                    "chain":          chain,
-                })
+            for sig in sigs:
+                created = sig.get("created_time", 0)
+                if created < cutoff:
+                    continue
+
+                volume_ratio = sig.get("volume_ratio", 0) or 0
+
+                # 强苏醒：成交量倍数 >= 10（volume_ratio = 当前量/休眠均量）
+                if volume_ratio >= 10:
+                    tag = token.get("tag_users_holding_percent") or {}
+                    awakening.append({
+                        "token_address":       token.get("token_address"),
+                        "symbol":              token.get("symbol"),
+                        "signal_time":         sig.get("signal_time"),
+                        "created_time":        created,
+                        "volume_ratio":        volume_ratio,
+                        "current_volume":      sig.get("current_volume", 0),
+                        "avg_history_volume":  sig.get("avg_history_volume", 0),
+                        "chain":               token.get("chain", chain),
+                        # --- token_meta fields for strategy ---
+                        "platform":            token.get("platform", ""),
+                        "swap_begin_time":     token.get("swap_begin_time", 0),
+                        "launch_time":         token.get("launch_time", 0),
+                        "launch_time_duration": token.get("launch_time_duration", 0),
+                        "buyer_count_d1":      token.get("buyer_count_d1", 0),
+                        "buy_tx_count_d1":     token.get("buy_tx_count_d1", 0),
+                        "shit_volume":         tag.get("shit_volume", 0),
+                        "new_volume":          tag.get("new_volume", 0),
+                        "smart_volume":        tag.get("smart_volume", 0),
+                        "whale_volume":        tag.get("whale_volume", 0),
+                        "scam_volume":         tag.get("scam_volume", 0),
+                    })
 
     return awakening
 
@@ -97,15 +118,15 @@ def get_kline_1m(api_key: str, token_address: str, chain: int = 3, size: int = 6
         K线列表，每条: {time, open, high, low, close, volume}
     """
     result = subprocess.run(
-        ["python", "/root/.hermes/skills/logearn/logearn-cli.py",
+        ["python3", _CLI_PATH,
          "log-get-kline",
-         "--token",   token_address,
-         "--chain",   str(chain),
-         "--interval", "60",    # 1分钟
-         "--size",    str(size)],
+         "--token",    token_address,
+         "--chain",    str(chain),
+         "--interval", "60",
+         "--size",     str(size)],
         capture_output=True, text=True,
         env={**os.environ, "LOGEARN_API_KEY": api_key},
-        cwd="/root/.hermes/skills/logearn",
+        cwd=_CLI_CWD,
     )
 
     try:

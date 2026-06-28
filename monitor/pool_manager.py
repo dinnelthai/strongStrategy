@@ -25,6 +25,7 @@ class AwakeningItem:
     added_at:      float = field(default_factory=time.time)
     signal_time:   int   = 0
     chain:         int   = 3
+    meta:          dict  = field(default_factory=dict)
 
 
 class AwakeningPool:

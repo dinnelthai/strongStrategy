@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "LogEarn-skills": {
+      "source": "logearn/logearn-skills",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "3bb7cf97570670cffe3529dd906ed7c00b234c8bf0cf157ae26df98962397066"
+    }
+  }
+}
