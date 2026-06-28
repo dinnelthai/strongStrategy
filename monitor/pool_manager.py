@@ -26,6 +26,7 @@ class AwakeningItem:
     signal_time:   int   = 0
     chain:         int   = 3
     meta:          dict  = field(default_factory=dict)
+    klines:        list  = field(default_factory=list)  # K 线缓存，首次全量，后续增量补齐
 
 
 class AwakeningPool:
@@ -43,8 +44,8 @@ class AwakeningPool:
         self._max_age = max_age_seconds
         self._cursor = 0  # 轮询游标
 
-    def add(self, token_address: str, symbol: str, **kwargs):
-        """加入苏醒信号到池中（去重）"""
+    def add(self, token_address: str, symbol: str, **kwargs) -> bool:
+        """加入苏醒信号到池中（去重）。返回 True 表示新增，False 表示已存在。"""
         with self._lock:
             if token_address not in self._pool:
                 self._pool[token_address] = AwakeningItem(
@@ -52,6 +53,8 @@ class AwakeningPool:
                     symbol=symbol,
                     **kwargs
                 )
+                return True
+            return False
 
     def remove(self, token_address: str):
         """从池中移除"""

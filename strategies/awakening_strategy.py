@@ -34,7 +34,7 @@ GRADUATION_MIN_SEC    = 7200   # 毕业后至少 120 分钟
 SHIT_VOLUME_MAX_PCT   = 5
 NEW_VOLUME_MAX_PCT    = 70
 BUY_TX_MIN_D1         = 50
-COST_DEVIATION_MIN_PCT = 2.0   # 收盘高于 VWAP 的最低偏差 %
+# VWAP 条件：收盘价站上 VWAP 即可
 AO_LOOKBACK           = 3      # 连续 N 根 AO 需 > 0 且递增
 
 
@@ -44,6 +44,45 @@ def _num(x) -> float:
         return v if v == v else 0.0  # NaN guard
     except (TypeError, ValueError):
         return 0.0
+
+
+def check_static_conditions(token_meta: dict) -> tuple[bool, str]:
+    """
+    入池前静态过滤（不需要 K 线）：条件 1-6。
+    返回 (True, "") 表示通过，(False, 原因) 表示淘汰。
+    """
+    symbol = token_meta.get("symbol", "UNKNOWN")
+    now_ts = time.time()
+
+    platform = token_meta.get("platform", "")
+    if platform not in ALLOW_PLATFORMS:
+        return False, f"平台不在白名单：{platform}"
+
+    launch_ts = _num(token_meta.get("swap_begin_time", 0))
+    age_days  = (now_ts - launch_ts) / 86400 if launch_ts > 0 else float("inf")
+    if launch_ts <= 0 or age_days > AGE_MAX_DAYS:
+        return False, f"年龄不符（{age_days:.1f}天）"
+
+    if not (_num(token_meta.get("launch_time_duration", 0)) > 0):
+        return False, "未毕业到外盘"
+
+    m_launch_ts = _num(token_meta.get("launch_time", 0))
+    if m_launch_ts > 0:
+        after_launch = now_ts - m_launch_ts
+        if after_launch < GRADUATION_MIN_SEC:
+            return False, f"外盘毕业不足{GRADUATION_MIN_SEC//60}分钟（{after_launch:.0f}秒）"
+
+    if _num(token_meta.get("shit_volume", 0)) >= SHIT_VOLUME_MAX_PCT:
+        return False, f"垃圾钱包占比过高：{_num(token_meta.get('shit_volume')):.1f}%"
+
+    if _num(token_meta.get("new_volume", 0)) >= NEW_VOLUME_MAX_PCT:
+        return False, f"新钱包占比过高：{_num(token_meta.get('new_volume')):.1f}%"
+
+    buyer_count = _num(token_meta.get("buyer_count_d1", 0))
+    if buyer_count <= BUY_TX_MIN_D1:
+        return False, f"24h买入地址不足：{buyer_count:.0f}"
+
+    return True, ""
 
 
 def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, str]:
@@ -57,56 +96,16 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     Returns:
         (是否满足, 原因描述)
     """
-    symbol = token_meta.get("symbol", "UNKNOWN")
+    # ------------------------------------------------------------------
+    # 条件 1-6：复用静态过滤（入池前已过滤，这里二次保障）
+    # ------------------------------------------------------------------
+    ok, reason = check_static_conditions(token_meta)
+    if not ok:
+        return False, reason
 
-    # ------------------------------------------------------------------
-    # 1. 平台白名单
-    # ------------------------------------------------------------------
-    platform = token_meta.get("platform", "")
-    if platform not in ALLOW_PLATFORMS:
-        return False, f"平台不在白名单：{platform}"
-
-    # ------------------------------------------------------------------
-    # 2. 年龄 ≤ 15 天
-    # ------------------------------------------------------------------
-    now_ts     = time.time()
-    launch_ts  = _num(token_meta.get("swap_begin_time", 0))
-    age_days   = (now_ts - launch_ts) / 86400 if launch_ts > 0 else float("inf")
-    if launch_ts <= 0 or age_days > AGE_MAX_DAYS:
-        return False, f"年龄不符（{age_days:.1f}天，上限{AGE_MAX_DAYS}天）"
-
-    # ------------------------------------------------------------------
-    # 3. 已毕业到外盘 + 毕业后 ≥ 120 分钟
-    # ------------------------------------------------------------------
-    if not (_num(token_meta.get("launch_time_duration", 0)) > 0):
-        return False, "还在内盘曲线上，未毕业到外盘"
-
-    m_launch_ts = _num(token_meta.get("launch_time", 0))
-    if m_launch_ts > 0:
-        after_launch = now_ts - m_launch_ts
-        if after_launch < GRADUATION_MIN_SEC:
-            return False, f"外盘毕业不足{GRADUATION_MIN_SEC//60}分钟（{after_launch:.0f}秒）"
-
-    # ------------------------------------------------------------------
-    # 4. 垃圾钱包占比 < 5%
-    # ------------------------------------------------------------------
-    shit_vol = _num(token_meta.get("shit_volume", 0))
-    if shit_vol >= SHIT_VOLUME_MAX_PCT:
-        return False, f"垃圾钱包占比过高：{shit_vol:.1f}%"
-
-    # ------------------------------------------------------------------
-    # 5. 新钱包占比 < 70%
-    # ------------------------------------------------------------------
-    new_vol = _num(token_meta.get("new_volume", 0))
-    if new_vol >= NEW_VOLUME_MAX_PCT:
-        return False, f"新钱包占比过高：{new_vol:.1f}%"
-
-    # ------------------------------------------------------------------
-    # 6. 24h 买入地址数 > 50（buyer_count_d1 = 唯一买入地址数）
-    # ------------------------------------------------------------------
-    buyer_count = _num(token_meta.get("buyer_count_d1", 0))
-    if buyer_count <= BUY_TX_MIN_D1:
-        return False, f"24h买入地址不足：{buyer_count:.0f}（需>{BUY_TX_MIN_D1}）"
+    now_ts = time.time()
+    launch_ts = _num(token_meta.get("swap_begin_time", 0))
+    age_days  = (now_ts - launch_ts) / 86400 if launch_ts > 0 else float("inf")
 
     # ------------------------------------------------------------------
     # K 线数据准备
@@ -120,13 +119,12 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     volumes = [c["volume"] for c in candles_1m]
 
     # ------------------------------------------------------------------
-    # 7. 成本线偏差 > 2%（收盘价 > VWAP + 2%）
+    # 7. 收盘价站上 VWAP
     # ------------------------------------------------------------------
     vwap = calc_vwap(closes, highs, lows, volumes)
     last_close = closes[-1]
-    deviation_pct = (last_close - vwap) / vwap * 100 if vwap > 0 else 0.0
-    if deviation_pct <= COST_DEVIATION_MIN_PCT:
-        return False, f"成本线偏差不足：{deviation_pct:.2f}%（需>{COST_DEVIATION_MIN_PCT}%）"
+    if vwap <= 0 or last_close <= vwap:
+        return False, f"价格未站上VWAP（收盘:{last_close:.6f} VWAP:{vwap:.6f}）"
 
     # ------------------------------------------------------------------
     # 8. AO：最近 3 根全 > 0 且严格递增（ao0 > ao1 > ao2）
@@ -142,11 +140,11 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
         return False, f"AO未递增：[{ao0:.4f},{ao1:.4f},{ao2:.4f}]"
 
     # ------------------------------------------------------------------
-    # 9. AC：ac0 > 0 且 ac0 > ac1（加速向上）
+    # 9. AC：最近 3 根全 > 0 且严格递增（ac0 > ac1 > ac2）
     #    AC(i) = AO[i] - SMA(AO[i-4..i])
     # ------------------------------------------------------------------
     def _ac_at(idx_from_end: int) -> Optional[float]:
-        """idx_from_end=0 → 最新，1 → 上一根"""
+        """idx_from_end=0 → 最新，1 → 上一根，2 → 上上根"""
         pos = len(ao_series) - 1 - idx_from_end
         if pos - 4 < 0:
             return None
@@ -155,10 +153,13 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
 
     ac0 = _ac_at(0)
     ac1 = _ac_at(1)
-    if ac0 is None or ac1 is None:
+    ac2 = _ac_at(2)
+    if ac0 is None or ac1 is None or ac2 is None:
         return False, "AC数据不足"
-    if not (ac0 > 0 and ac0 > ac1):
-        return False, f"AC条件不满足：ac0={ac0:.4f} ac1={ac1:.4f}"
+    if not (ac0 > 0 and ac1 > 0 and ac2 > 0):
+        return False, f"AC未全部>0：[{ac0:.4f},{ac1:.4f},{ac2:.4f}]"
+    if not (ac0 > ac1 > ac2):
+        return False, f"AC未递增：[{ac0:.4f},{ac1:.4f},{ac2:.4f}]"
 
     # ------------------------------------------------------------------
     # 全部通过
@@ -166,7 +167,7 @@ def check_entry_conditions(candles_1m: list, token_meta: dict) -> tuple[bool, st
     return True, (
         f"[命中] {symbol} | "
         f"年龄={age_days:.1f}天 | "
-        f"成本偏差={deviation_pct:.2f}% | "
-        f"AO=[{ao0:.2f},{ao1:.2f},{ao2:.2f}] | "
-        f"AC=[{ac0:.4f},{ac1:.4f}]"
+        f"VWAP={vwap:.6f} 收盘={last_close:.6f} | "
+        f"AO=[{ao0:.4f},{ao1:.4f},{ao2:.4f}] | "
+        f"AC=[{ac0:.4f},{ac1:.4f},{ac2:.4f}]"
     )

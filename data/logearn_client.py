@@ -102,6 +102,22 @@ def get_awakening_signals(api_key: str, chain: int = 3, lookback_seconds: int = 
     return awakening
 
 
+# ============ K线合并工具 ============
+
+def merge_klines(cached: list, new_bars: list, max_size: int = 60) -> list:
+    """
+    将增量 K 线合并进缓存。
+    - 以 time 为 key 去重（新 bar 覆盖旧 bar，更新最新价格）
+    - 按时间升序排列
+    - 只保留最后 max_size 根
+    """
+    by_time = {c["time"]: c for c in cached}
+    for bar in new_bars:
+        by_time[bar["time"]] = bar
+    merged = sorted(by_time.values(), key=lambda x: x["time"])
+    return merged[-max_size:]
+
+
 # ============ K线数据获取 ============
 
 def get_kline_1m(api_key: str, token_address: str, chain: int = 3, size: int = 60) -> list[dict]:
